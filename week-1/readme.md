@@ -1,1 +1,0 @@
-# starting week 1 homework
