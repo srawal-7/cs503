@@ -63,7 +63,7 @@ int open_db(char *dbFile, bool should_truncate)
 int get_student(int fd, int id, student_t *s)
 {
     // TODO
-
+        //checking that ID is within the range provided
         if (id < MIN_STD_ID || id > MAX_STD_ID) {
         return SRCH_NOT_FOUND;
     }
@@ -77,14 +77,15 @@ int get_student(int fd, int id, student_t *s)
         return ERR_DB_FILE;
     }
     
-    student_t student;
+    student_t student; //creating a student instance from the struc provided
     int file_read = read(fd, &student, STUDENT_RECORD_SIZE);
 
-    if (file_read == -1) {
+    if (file_read == -1) {   // If we are unable to read the file
         return ERR_DB_FILE;
     }
 
-    if(file_read == STUDENT_RECORD_SIZE) {
+    //If file is the right size and ID is not 0 or null
+    if(file_read == STUDENT_RECORD_SIZE) { 
         if (student.id == id && student.id != DELETED_STUDENT_ID) {
         *s = student;
         return NO_ERROR;
