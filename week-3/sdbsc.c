@@ -145,14 +145,15 @@ int add_student(int fd, int id, char *fname, char *lname, int gpa)
     return ERR_DB_FILE;  // Error reading the database file
     } 
 
-    //Calculate index for the student 
-    if (read_file == 0 || memcmp(&student, &EMPTY_STUDENT_RECORD, STUDENT_RECORD_SIZE) == 0){
+    //Calculating index for the student 
+    if (read_file == 0 || memcmp(&student, &EMPTY_STUDENT_RECORD, STUDENT_RECORD_SIZE) == 0){ 
+    //if it matches then copy all relevent fields    
     student.id = id;
     strncpy(student.fname, fname, sizeof(student.fname) - 1);
     strncpy(student.lname, lname, sizeof(student.lname) - 1);
     student.gpa = gpa;
 
-    int write_file = write(fd, &student, STUDENT_RECORD_SIZE);
+    int write_file = write(fd, &student, STUDENT_RECORD_SIZE); //declaring field to write to file
 
     if(write_file == STUDENT_RECORD_SIZE) {
         printf(M_STD_ADDED,id);
@@ -203,6 +204,7 @@ int del_student(int fd, int id)
     {
         printf(M_STD_NOT_FND_MSG, id);
         return ERR_DB_OP;
+        
     } else if (student_to_delete == ERR_DB_FILE){
         return ERR_DB_FILE;
     }
