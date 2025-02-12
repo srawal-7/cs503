@@ -1,116 +1,159 @@
-#include <stdio.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
-
+#include <ctype.h>
 #include "dshlib.h"
 
 /*
- * Implement your main function by building a loop that prompts the
- * user for input.  Use the SH_PROMPT constant from dshlib.h and then
- * use fgets to accept user input.  Since we want fgets to also handle
- * end of file so we can run this headless for testing we need to check
- * the return code of fgets.  I have provided an example below of how
- * to do this assuming you are storing user input inside of the cmd_buff
- * variable.
+ * build_cmd_list
+ *     cmd_line:     the command line from the user
+ *     clist *:       pointer to clist structure to be populated
  *
- *      while(1){
- *        printf("%s", SH_PROMPT);
- *        if (fgets(cmd_buff, ARG_MAX, stdin) == NULL){
- *           printf("\n");
- *           break;
- *        }
- *        //remove the trailing \n from cmd_buff
- *        cmd_buff[strcspn(cmd_buff,"\n")] = '\0';
+ * This function builds the command_list_t structure passed by the caller
+ * It does this by first splitting the cmd_line into commands by splitting
+ * the string based on any pipe characters '|'. It then traverses each
+ * command. For each command (a substring of cmd_line), it then parses
+ * that command by taking the first token as the executable name, and
+ * then the remaining tokens as the arguments.
  *
- *        //IMPLEMENT THE REST OF THE REQUIREMENTS
- *      }
+ * NOTE your implementation should be able to handle properly removing
+ * leading and trailing spaces!
  *
- *   Also, use the constants in the dshlib.h in this code.
- *      SH_CMD_MAX              maximum buffer size for user input
- *      EXIT_CMD                constant that terminates the dsh program
- *      SH_PROMPT               the shell prompt
- *      OK                      the command was parsed properly
- *      WARN_NO_CMDS            the user command was empty
- *      ERR_TOO_MANY_COMMANDS   too many pipes used
+ * errors returned:
  *
- *   Expected output:
- *
- *      CMD_OK_HEADER      if the command parses properly. You will
- *                         follow this by the command details
- *
- *      CMD_WARN_NO_CMD    if the user entered a blank command
- *      CMD_ERR_PIPE_LIMIT if the user entered too many commands using
- *                         the pipe feature, e.g., cmd1 | cmd2 | ... |
- *
- *  See the provided test cases for output expectations.
+ *      OK:                 No Error
+ *      ERR_TOO_MANY_COMMANDS: There is a limit of CMD_MAX (see dshlib.h)
+ *                          commands.
+ *      ERR_CMD_OR_ARGS_TOO_BIG: One of the commands provided by the user
+ *                           was larger than allowed, either the
+ *                           executable name, or the arg string.
  */
+void trim_whitespace(char *str) {
+    // Check if the string is empty or only contains spaces
+    if (str == NULL || *str == '\0') {
+        return;  // If the string is empty, there's nothing to trim
+    }
 
-int main() {
-    char cmd_buff[SH_CMD_MAX];  // Buffer to store the user input
-    int rc = 0;  // Return code for error checking
-    command_list_t clist;
+    // Skip leading spaces
+    char *start = str;
 
-    // Main loop to accept commands from the user
-    while (1) {
-        printf("%s", SH_PROMPT);  // Print the prompt
-        if (fgets(cmd_buff, SH_CMD_MAX, stdin) == NULL) {
-            printf("\n");
-            break;  // Exit if there's an input error
+    while (*start && isspace(*start)) {
+        //printf("%s\n", start);
+        start++;
+    }
+
+    // If the string consists of only spaces, return empty string
+    if (*start == '\0') {
+        *str = '\0';  // Set the string to an empty string
+        return;
+    }
+
+    // Find the last non-space character
+    //char *end = str + strlen(str) - 1;
+    //while (*end == SPACE_CHAR) end--;
+
+    char *end = str + strlen(str) - 1;
+        while ((end > str) && (isspace(*end))){
+            *end = '\0';
+            end--;
         }
 
-        // Remove the trailing newline character from cmd_buff
-        cmd_buff[strcspn(cmd_buff, "\n")] = '\0';
+    // Null-terminate the string after trimming
+    *(end + 1) = '\0';
+}
 
-        // Trim leading and trailing whitespace (if any) from the user input
-        trim_whitespace(cmd_buff);
+/*void trim_whitespace(char *str) {
+    char *start = str;
+    while (*start == SPACE_CHAR) start++;  // Skip leading spaces
+    char *end = str + strlen(str) - 1;
+    while (*end == SPACE_CHAR) end--;  // Skip trailing spaces
+    *(end + 1) = '\0';  // Null-terminate the string
+}*/
 
-        // Handle empty input
-        if (strlen(cmd_buff) == 0) {
-            printf(CMD_WARN_NO_CMD);  // Use the defined constant for empty input warning
-            continue;  // Skip processing and go back to the prompt
+int build_cmd_list(char *cmd_line, command_list_t *clist) {
+    
+    memset(clist->commands, 0, sizeof(clist->commands)); //to remove any extra memory before the start of the program
+
+    char *cmd_token;
+    char *command_copy = strdup(cmd_line);  // Making a copy of the input command line for strtok
+    int cmd_count = 0;
+
+    // Trim leading/trailing spaces from the input command line
+    trim_whitespace(command_copy);
+
+    // If the command is empty, return a warning
+    if (command_copy[0] == '\0') {
+        printf("warning: no commands provided\n");
+        free(command_copy);
+        return WARN_NO_CMDS;
+    }
+
+    // Split the input line by the pipe character '|'
+    cmd_token = strtok(command_copy, PIPE_STRING); // Split by pipe
+    while (cmd_token != NULL) {
+        if (cmd_count >= CMD_MAX) {
+            free(command_copy);
+            // Too many commands in a single line
+            return ERR_TOO_MANY_COMMANDS;
         }
 
-        // If the user entered "exit", break the loop
-        if (strcmp(cmd_buff, EXIT_CMD) == 0) {
-            break;
+        // Trim whitespace from the command
+        trim_whitespace(cmd_token);
+
+        // Start iterating over the command string and split into exe and args
+        char *exe_token = cmd_token;
+        char *args_token = NULL;
+
+        while (*exe_token != '\0' && !isspace(*exe_token)) {
+            exe_token++;  // Move to the first space or end of the string
         }
 
-        // Build the command list
-        rc = build_cmd_list(cmd_buff, &clist);
+        if (*exe_token == '\0') {
+            // If no space is found, the entire string is the executable
+            strncpy(clist->commands[cmd_count].exe, cmd_token, EXE_MAX - 1);
+            clist->commands[cmd_count].exe[EXE_MAX - 1] = '\0';
+        } else {
+            // Otherwise, split the string into the executable and arguments
+            *exe_token = '\0';  // Null-terminate the executable
+            strncpy(clist->commands[cmd_count].exe, cmd_token, EXE_MAX - 1);
+            clist->commands[cmd_count].exe[EXE_MAX - 1] = '\0';
 
-        // Handle too many commands after the parsing
-        if (clist.num > CMD_MAX) {
-            printf(CMD_ERR_PIPE_LIMIT, CMD_MAX);  // Error: Too many commands (limit is CMD_MAX)
-            continue;
-        }
+            // Move to the argument string (skipping spaces)
+            args_token = exe_token + 1;
+            trim_whitespace(args_token);
 
-        // Handle different results based on return code from build_cmd_list
-        if (rc == OK) {
-            // Print the header with the number of commands parsed
-            printf(CMD_OK_HEADER, clist.num);
-
-            // Print each command and its arguments
-            for (int i = 0; i < clist.num; ++i) {
-                // Print the command name
-                printf("<%d>%s", i + 1, clist.commands[i].exe);
-
-                // If the command has arguments, print them inside square brackets
-                if (clist.commands[i].args[0] != '\0') {
-                    // In this new version, `args` is a single concatenated string.
-                    // This should print all the arguments space-separated.
-                    printf("[%s]", clist.commands[i].args);
-                }
-                printf("\n");
+            if (args_token[0] != '\0') {
+                strncpy(clist->commands[cmd_count].args, args_token, ARG_MAX - 1);
+                clist->commands[cmd_count].args[ARG_MAX - 1] = '\0';  // null-terminate
+            } else {
+                clist->commands[cmd_count].args[0] = '\0';  // No arguments
             }
+        }
 
-        } else if (rc == WARN_NO_CMDS) {
-            printf(CMD_WARN_NO_CMD);  // Print warning if no commands were provided
-        } else if (rc == ERR_TOO_MANY_COMMANDS) {
-            printf(CMD_ERR_PIPE_LIMIT, CMD_MAX);  // Print error if there are too many commands
-        } else if (rc == ERR_CMD_OR_ARGS_TOO_BIG) {
-            printf("error: command or argument too big\n");  // Handle the case of too large commands
+        cmd_count++;
+         
+        // Move to the next command segment after the pipe
+        cmd_token = strtok(NULL, PIPE_STRING);  // Get the next command after pipe
+        
+        // After strtok, skip any leading spaces in the next segment
+        if (cmd_token != NULL) {
+            // Skip leading spaces (if any)
+            while (*cmd_token == SPACE_CHAR) {
+                cmd_token++;  // Skip leading spaces after pipe
+            }
         }
     }
 
-    return 0;  // Exit the shell
+    // Update the number of commands in the list
+    clist->num = cmd_count;
+
+    // Check if no commands were parsed
+    if (clist->num == 0) {
+        printf("warning: no commands provided\n");
+        free(command_copy);
+        return WARN_NO_CMDS;
+    }
+
+    free(command_copy); // Free the duplicate string
+    return OK;
 }
