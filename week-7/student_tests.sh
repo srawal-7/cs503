@@ -90,4 +90,28 @@ EOF
     [ "$status" -eq 0 ]
 }
 
+@test "check for redirection file creation" {
+  # Run the echo command and redirect to a file by passing input via a pipe
+  echo 'echo "hello, class" > out.txt' | ./dsh
 
+  # Verify that the file contains the correct output without quotes
+  run cat out.txt
+  [ "$status" -eq 0 ]
+  [ "$output" == "hello, class" ]
+}
+
+@test "check for correct redirection file printing" {
+  # Create the output file from Test 1 (this ensures the file exists before use)
+  echo 'echo "hello, class" > out.txt' | ./dsh
+
+  # Check if the file exists before proceeding
+  run ls out.txt
+  [ "$status" -eq 0 ]
+
+  # Run the dsh command with input redirection to read from out.txt
+  run cat out.txt
+
+  # Verify the output is what we expect (the content from out.txt, without quotes)
+  [ "$status" -eq 0 ]
+  [ "$output" == "hello, class" ]
+}
