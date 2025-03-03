@@ -16,12 +16,16 @@ typedef struct command
     char args[ARG_MAX];
 } command_t;
 
-typedef struct cmd_buff
-{
-    int  argc;
+typedef struct cmd_buff {
+    int argc;
     char *argv[CMD_ARGV_MAX];
     char *_cmd_buffer;
+    int input_fd;     // For input redirection
+    int output_fd;    // For output redirection
+    int input_redirect;  // Flag to check if input redirection is required
+    int output_redirect; // Flag to check if output redirection is required
 } cmd_buff_t;
+
 
 /* WIP - Move to next assignment 
 #define N_ARG_MAX    15     //MAX number of args for a command

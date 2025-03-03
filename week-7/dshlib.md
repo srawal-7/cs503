@@ -66,12 +66,16 @@ char *trim_whitespace(char *str) {
     return str;
 }
 
-
 int build_cmd_buff(char *cmd_line, cmd_buff_t *cmd_buff) {
     cmd_buff->argc = 0;
+    cmd_buff->input_redirect = 0;
+    cmd_buff->output_redirect = 0;
+    cmd_buff->input_fd = -1;
+    cmd_buff->output_fd = -1;
+
     char *token = cmd_line;
     int in_quotes = 0;  // Flag to track if we're inside quotes
-    char *start = NULL; // Pointer to the start of the current token
+    char *start = NULL;
 
     // Trim leading whitespace
     trim_whitespace(token);
@@ -83,17 +87,75 @@ int build_cmd_buff(char *cmd_line, cmd_buff_t *cmd_buff) {
             continue;
         }
 
-        // Handle opening quote (start of quoted string)
-        if (*token == '"' && !in_quotes) {
-            in_quotes = 1;  // Enter "quoted" mode
-            token++;  // Skip the opening quote
+        // Handle input redirection
+        if (*token == '<' && !in_quotes) {
+            token++;  // Skip the '<' symbol
+            trim_whitespace(token);
+            if (*token == '\0') {
+                return ERR_CMD_ARGS_BAD;  // No file provided after '<'
+            }
+
+            cmd_buff->input_redirect = 1;
+            char *file = token;
+            // Get the filename
+            while (*token != '\0' && !isspace((unsigned char)*token)) {
+                token++;
+            }
+            int file_len = token - file;
+            char *input_file = malloc(file_len + 1);
+            strncpy(input_file, file, file_len);
+            input_file[file_len] = '\0';
+
+            cmd_buff->input_fd = open(input_file, O_RDONLY);
+            if (cmd_buff->input_fd == -1) {
+                perror("Failed to open input file");
+                return ERR_EXEC_CMD;
+            }
+
+            free(input_file);
             continue;
         }
 
-        // Handle closing quote (end of quoted string)
-        if (*token == '"' && in_quotes) {
-            in_quotes = 0;  // Exit "quoted" mode
-            token++;  // Skip the closing quote
+        // Handle output redirection
+        if (*token == '>' && !in_quotes) {
+            token++;  // Skip the '>' symbol
+            if (*token == '>') {  // Check for append redirection '>>'
+                cmd_buff->output_redirect = 2;  // 2 means append mode
+                token++;  // Skip the second '>'
+            } else {
+                cmd_buff->output_redirect = 1;  // 1 means overwrite mode
+            }
+            token++;  // Skip space
+            trim_whitespace(token);
+            if (*token == '\0') {
+                return ERR_CMD_ARGS_BAD;  // No file provided after '>'
+            }
+
+            char *file = token;
+            // Get the filename
+            while (*token != '\0' && !isspace((unsigned char)*token)) {
+                token++;
+            }
+            int file_len = token - file;
+            char *output_file = malloc(file_len + 1);
+            strncpy(output_file, file, file_len);
+            output_file[file_len] = '\0';
+
+            // Trim any additional spaces just in case
+            trim_whitespace(output_file);
+
+            if (cmd_buff->output_redirect == 1) {
+                cmd_buff->output_fd = open(output_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            } else {
+                cmd_buff->output_fd = open(output_file, O_WRONLY | O_CREAT | O_APPEND, 0644);
+            }
+
+            if (cmd_buff->output_fd == -1) {
+                perror("Failed to open output file");
+                return ERR_EXEC_CMD;
+            }
+
+            free(output_file);
             continue;
         }
 
@@ -104,6 +166,9 @@ int build_cmd_buff(char *cmd_line, cmd_buff_t *cmd_buff) {
 
         // Move token to the next space or quote, but keep inside quoted sections
         while (*token != '\0' && (in_quotes || !isspace((unsigned char)*token))) {
+            if (*token == '"') {
+                in_quotes = !in_quotes;  // Toggle the in_quotes flag when encountering a quote
+            }
             token++;
         }
 
@@ -114,6 +179,12 @@ int build_cmd_buff(char *cmd_line, cmd_buff_t *cmd_buff) {
             // If the token ends with a quote (and we're outside quotes), remove it
             if (token_length > 0 && *(token - 1) == '"') {
                 token_length--;  // Remove the quote at the end
+            }
+
+            // If the token starts with a quote, remove it
+            if (token_length > 0 && *start == '"') {
+                start++;  // Skip the starting quote
+                token_length--;  // Decrease the token length
             }
 
             char *arg = malloc(token_length + 1);
@@ -335,6 +406,38 @@ int execute_pipeline(command_list_t *clist) {
     return OK;
 }
 
+int exec_cmd(cmd_buff_t *cmd_buff) {
+    if (cmd_buff->input_redirect) {
+        if (dup2(cmd_buff->input_fd, STDIN_FILENO) == -1) {
+            perror("dup2 input failed");
+            return ERR_EXEC_CMD;
+        }
+    }
+
+    if (cmd_buff->output_redirect) {
+        if (dup2(cmd_buff->output_fd, STDOUT_FILENO) == -1) {
+            perror("dup2 output failed");
+            return ERR_EXEC_CMD;
+        }
+    }
+
+    // Close any open file descriptors after redirection
+    if (cmd_buff->input_fd != -1) {
+        close(cmd_buff->input_fd);
+    }
+    if (cmd_buff->output_fd != -1) {
+        close(cmd_buff->output_fd);
+    }
+
+    execvp(cmd_buff->argv[0], cmd_buff->argv);
+
+    // If execvp fails
+    perror("execvp failed");
+    return ERR_EXEC_CMD;
+}
+
+
+
 // Main execution loop to read commands and process them
 int exec_local_cmd_loop() {
     char *cmd_line = NULL;
@@ -360,6 +463,7 @@ int exec_local_cmd_loop() {
         if (strlen(cmd_line) == 0) {
             continue;
         }
+
         clear_cmd_buff(&cmd_buff);
         if (build_cmd_buff(cmd_line, &cmd_buff) != OK) {
             free(cmd_line);
@@ -383,7 +487,45 @@ int exec_local_cmd_loop() {
             execute_pipeline(&clist);
         } else {
             pid_t pid = fork();
-            if (pid == 0) {
+            if (pid == 0) {  // Child process
+                // Special handling for echo command: remove quotes if present
+                if (strcmp(cmd_buff.argv[0], "echo") == 0) {
+                    // Check if the first argument has quotes around it
+                    char *arg = cmd_buff.argv[1];
+                    if (arg && arg[0] == '"' && arg[strlen(arg) - 1] == '"') {
+                        // Remove the closing quote
+                        arg[strlen(arg) - 1] = '\0';
+                        // Shift the string to remove the opening quote
+                        memmove(arg, arg + 1, strlen(arg));  
+                    }
+                }
+
+                // Handle input redirection
+                if (cmd_buff.input_redirect) {
+                    if (dup2(cmd_buff.input_fd, STDIN_FILENO) == -1) {
+                        perror("dup2 input");
+                        exit(EXIT_FAILURE);
+                    }
+                    close(cmd_buff.input_fd);
+                }
+
+                // Handle output redirection
+                if (cmd_buff.output_redirect) {
+                    if (cmd_buff.output_redirect == 1) {  // Overwrite
+                        if (dup2(cmd_buff.output_fd, STDOUT_FILENO) == -1) {
+                            perror("dup2 output");
+                            exit(EXIT_FAILURE);
+                        }
+                    } else if (cmd_buff.output_redirect == 2) {  // Append
+                        if (dup2(cmd_buff.output_fd, STDOUT_FILENO) == -1) {
+                            perror("dup2 append output");
+                            exit(EXIT_FAILURE);
+                        }
+                    }
+                    close(cmd_buff.output_fd);
+                }
+
+                // Execute the command
                 if (execvp(cmd_buff.argv[0], cmd_buff.argv) == -1) {
                     switch (errno) {
                         case ENOENT:
@@ -412,6 +554,7 @@ int exec_local_cmd_loop() {
             }
         }
 
+        // Clean up allocated memory for arguments
         for (int i = 0; i < cmd_buff.argc; i++) {
             free(cmd_buff.argv[i]);
         }
@@ -420,3 +563,6 @@ int exec_local_cmd_loop() {
     free(cmd_line);
     return OK;
 }
+
+
+
