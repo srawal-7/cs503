@@ -147,5 +147,3 @@ int main(int argc, char *argv[]){
 
   printf("cmd loop returned %d\n", rc);
 }
-
-//could easily be a firewall issue, could be something we can diagnose easily
