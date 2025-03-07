@@ -645,6 +645,3 @@ int exec_local_cmd_loop() {
     free(cmd_line);
     return OK;
 }
-
-
-
